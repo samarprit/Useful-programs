@@ -1,0 +1,116 @@
+---
+title: "ML project1"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+suppressWarnings(library(glmnet))
+suppressWarnings(library(rpart))
+suppressWarnings(library(caret))
+suppressWarnings(library(rpart.plot))
+datapath <- "E:/business analytics/Uchicago/subjects/machine learning/slice_localization_data"
+dat<-read.csv(file=paste(datapath,"slice_localization_data.csv",sep="/"))
+dat<-as.matrix(dat)
+pred<-dat[,c(-1,-386)]
+Y<-dat[,386]
+head(colnames(pred))
+plot(Y)
+qqnorm(Y)
+qqline(Y)
+```
+
+```{r}
+dta = data.frame(Y=Y,pred)
+lin_mod = lm(Y ~ ., data = dta)
+#rownames(coefficients(summary(lin_mod)))
+coef_p_values = coefficients(summary(lin_mod))[-1,4]
+coef_remov = coef_p_values[coef_p_values>0.05]
+remove_ind = match(coef_remov, coef_p_values)
+filt_var = names(coef_p_values[-remove_ind])
+
+lm_final = lm(Y ~ ., data = dta[,c(1,match(filt_var, colnames(dta)))])
+
+r_square_lm = summary(lm_final)$"r.squared"
+num_predictors_lm = length(filt_var)
+mse_lm = mean(lm_final$residuals^2)
+AIC_lm = AIC(lm_final)
+lm_char = c(AIC = AIC_lm, R_square = r_square_lm, MSE = mse_lm, Number_Of_Predictors = num_predictors_lm)
+lm_char
+```
+
+```{r}
+PCA <- princomp(pred)
+factorscores <- PCA$scores
+dta_PCA = data.frame(Y=Y,factorscores)
+PCA_mod = lm(Y ~ ., data = dta_PCA)
+coef_p_values_pca = coefficients(summary(PCA_mod))[-1,4]
+coef_rem_pca = coef_p_values_pca[coef_p_values_pca>0.05]
+remove_index_pca = match(coef_rem_pca, coef_p_values_pca)
+filt_var_pca = names(coef_p_values_pca[-remove_index_pca])
+
+pca_mod_v2 = lm(Y ~ ., data = dta_PCA[,c(1,match(filt_var_pca, colnames(dta_PCA)))])
+
+r_square_pca = summary(pca_mod_v2)$"r.squared"
+num_predictors_pca = length(filt_var_pca)
+mse_pca = mean(pca_mod_v2$residuals^2)
+AIC_pca = AIC(pca_mod_v2)
+pca_char = c(AIC = AIC_pca, R_square = r_square_pca, MSE = mse_pca, Number_Of_Predictors = num_predictors_pca)
+#options("scipen"=100, "digits"=4)
+pca_char
+```
+
+```{r}
+lassomod=glmnet(x=pred,y=Y,alpha=1,nlambda=100,lambda.min.ratio=.0001)
+plot(lassomod)
+#cross valdiation to determine best lambda
+cv.out=cv.glmnet(x=pred,y=Y,alpha=1)
+plot(cv.out)
+(bestlam =cv.out$lambda.min)
+lassobest<-glmnet(x=pred,y=Y,alpha = 1,lambda=bestlam)
+summary(lassobest)
+
+lassotemp.coef=predict(lassobest,type="coefficients",s=bestlam)
+removedsslope<-c(which(lassotemp.coef==0,arr.ind = TRUE)[,1])
+removedsslope
+lasso.pred=predict(lassomod,s=bestlam,newx=pred)
+(lassomod.mse<-mean((lasso.pred -Y)^2)) 
+lassor2<-1-(lassomod.mse/mean((Y-mean(Y))^2))
+tLL <- lassobest$nulldev - deviance(lassobest)
+k <- lassobest$df
+n <- lassobest$nobs
+(AICc <- -tLL+2*k+2*k*(k+1)/(n-k-1))
+lassomod.numpred<-ncol(pred)-length(removedsslope)
+lassom<-cbind(AICc,lassomod.mse,lassomod.numpred,lassor2)
+colnames(lassom)<-c("AIC","MSE","num_significant_pred","R-squared")
+lassom
+```
+
+```{r}
+set.seed(0)
+ctrl <- trainControl(method = "cv", number = 10)
+tree.slice <- train(Y~.,data=cbind(Y,pred),method = 'rpart', trControl = ctrl)
+tree.slice$results
+prp(tree.slice$finalModel,extra=101, # display the number of observations that fall in the node
+    branch=.5, # change angle of branch lines
+    shadow.col="gray", # shadows under the leaves
+    branch.lty=3, # draw branches using dotted lines
+    split.cex=1.2, # make the split text larger than the node text
+    split.prefix="is ", # put "is " before split text
+    split.suffix="?", # put "?" after split text
+    split.box.col="lightgray", # lightgray split boxes (default is white)
+    split.border.col="darkgray", # darkgray border on split boxes
+    split.round=.5,
+    nn=TRUE) # display the node numbers, default is FALSE
+(caretTree.MSE<-mean(residuals(tree.slice$finalModel)^2))
+(carettree.r2<-1-(caretTree.MSE/mean((Y-mean(Y))^2)))
+```
+
+```{r}
+Importantpred<-length(tree.slice$finalModel$variable.importance)
+treechar<-cbind(caretTree.MSE,carettree.r2,Importantpred,383)
+colnames(treechar)<-c("MSE","R-squared","Important Variables","total Predictors")
+treechar
+```
+We see that MSE is lowest for  lasso model and linear. whereas number of predictors is lowest for tree( variable improtance from final model is 12) and PCA (228) then linear model(264) and maximum for lasso model(361). Since linear model has lower number of predictors and R-square value is near to lasso model.Therefore, looking at all the parameters above we can say that linear model is best for this data.
